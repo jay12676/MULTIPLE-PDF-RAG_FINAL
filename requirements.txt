@@ -1,0 +1,38 @@
+# LLM
+groq
+langchain
+langchain-groq
+langchain-community
+langgraph
+
+# Embeddings & Vector Store
+sentence-transformers
+faiss-cpu
+rank-bm25
+
+# PDF Parsing
+pymupdf
+easyocr
+Pillow
+
+# Backend
+fastapi
+uvicorn[standard]
+python-multipart
+httpx
+requests
+
+# Task Queue
+celery[redis]
+redis
+
+# Database
+sqlalchemy
+alembic
+
+# Frontend
+streamlit
+
+# Config & Utils
+python-dotenv
+pydantic-settings
