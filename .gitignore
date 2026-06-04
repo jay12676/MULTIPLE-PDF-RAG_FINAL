@@ -38,5 +38,6 @@ Thumbs.db
 node_modules/
 package-lock.json
 
-# Claude Code
-.claude/
+# Generated explanation PDF (kept locally, not pushed)
+*.pdf
+build_explanation_pdf.py

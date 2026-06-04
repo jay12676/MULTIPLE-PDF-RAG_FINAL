@@ -112,7 +112,7 @@ YOU UPLOAD A PDF
 ┌─────────────────────────────────────────────────────────────────┐
 │  STEP 3 — EMBED (Convert text to numbers)                       │
 │                                                                 │
-│  Each chunk → sentence-transformers model → 384-dim vector      │
+│  Each chunk → fastembed (ONNX) MiniLM → 384-dim vector          │
 │                                                                 │
 │  "Drug X causes headache" → [0.23, -0.11, 0.87, ...]           │
 │  "Medication Y leads to nausea" → [0.21, -0.09, 0.84, ...]     │
@@ -524,9 +524,9 @@ Celery Worker picks up the job:
 Chunks from Phase 1
         │
         ▼
-Embed (sentence-transformers/all-MiniLM-L6-v2)
+Embed (fastembed / ONNX — all-MiniLM-L6-v2)
   Batch: 256 chunks per forward pass
-  Output: 384-dim float32 vector per chunk
+  Output: 384-dim float32 vector per chunk (no PyTorch — runs on a 2 GB VPS)
         │
         ├──────────────────────────────────┐
         ▼                                  ▼
@@ -653,6 +653,21 @@ After all PDFs indexed:
 | Contradiction scan | Only runs once per upload batch, results cached in DB |
 | Many concurrent users | FastAPI async + Celery queue — no blocking |
 | FAISS gets large | Switch to IndexIVFFlat (nlist=1024) for sublinear search |
+| Cheap VPS (2 GB RAM) | Embeddings + reranking use **fastembed (ONNX runtime)** instead of PyTorch — the whole stack fits a 2 GB / 2 vCPU droplet |
+
+---
+
+### Deployment footprint
+
+The LLM runs remotely on GROQ, and the local ML models use the **ONNX runtime** (via `fastembed`) rather than PyTorch. This keeps the resident memory small:
+
+| Tier | Droplet | Notes |
+|---|---|---|
+| Minimum | **2 vCPU / 2 GB** (+ 2 GB swap) | Works after the PyTorch→ONNX change; add swap for the build/first model download |
+| Comfortable | 2 vCPU / 4 GB | Smooth for small multi-user use |
+| Headroom | 4 vCPU / 8 GB | Larger PDFs + more concurrency |
+
+> On a fresh VPS, re-upload your PDFs after deploying — ONNX vectors are not bit-identical to the old PyTorch ones, so the FAISS index should be rebuilt (the dimension is unchanged at 384).
 
 ---
 
@@ -662,13 +677,13 @@ After all PDFs indexed:
 |---|---|---|
 | **Frontend** | **Streamlit** | **Chat, Contradictions, Gaps, Timeline, Insights UI** |
 | LLM | GROQ API (llama3-70b) | Reasoning, contradiction detection, insight generation |
-| Embeddings | sentence-transformers/all-MiniLM-L6-v2 | Chunk + query vectorization |
+| Embeddings | fastembed (ONNX) — all-MiniLM-L6-v2 | Chunk + query vectorization — no PyTorch, low RAM |
 | Orchestration | LangChain + LangGraph | All reasoning pipelines (Q&A + 5 unique features) |
 | Vector Store | FAISS | ANN search over chunk embeddings |
 | Sparse Search | BM25 (rank_bm25) | Keyword search for exact terms |
-| Re-ranking | cross-encoder (HuggingFace) | Precision re-ranking |
+| Re-ranking | fastembed cross-encoder (ms-marco-MiniLM) | Precision re-ranking — no PyTorch |
 | PDF Parsing | PyMuPDF (fitz) | Page-by-page text extraction |
-| OCR | Tesseract + pdf2image | Scanned page fallback |
+| OCR | Tesseract (pytesseract) | Scanned page fallback (EasyOCR removed — it required PyTorch) |
 | Backend | FastAPI | Async REST + SSE streaming |
 | Task Queue | Celery + Redis | Background ingestion + feature pipelines |
 | Database | SQLite (dev) / PostgreSQL (prod) | Chunks, docs, contradictions, gaps, insights |
@@ -846,7 +861,7 @@ source venv/bin/activate
 ```bash
 pip install -r requirements.txt
 ```
-> This installs: FastAPI, LangChain, LangGraph, GROQ, sentence-transformers, FAISS, BM25, Celery, Redis, Streamlit, PyMuPDF, SQLAlchemy, and all other dependencies.
+> This installs: FastAPI, LangChain, LangGraph, GROQ, fastembed (ONNX runtime — no PyTorch), FAISS, BM25, Celery, Redis, Streamlit, PyMuPDF, SQLAlchemy, and all other dependencies.
 
 #### Step 3 — Configure Environment
 Open the `.env` file and make sure it has your GROQ API key:
@@ -856,7 +871,7 @@ GROQ_MODEL=llama3-70b-8192
 REDIS_URL=redis://localhost:6379
 DATABASE_URL=sqlite:///./data/db/documind.db
 EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+RERANKER_MODEL=Xenova/ms-marco-MiniLM-L-6-v2
 CHUNK_SIZE=512
 CHUNK_OVERLAP=64
 MAX_CHUNKS_RETRIEVED=20
@@ -985,6 +1000,6 @@ The sidebar should show **● API Online** (green) — if it shows **● API Off
 
 ## Why Any Topic, Any Pages, Any Number of PDFs
 
-- **Any topic:** Uses general-purpose embeddings (sentence-transformers) — not domain-specific. Same system works for legal, medical, finance, engineering, or any other field.
+- **Any topic:** Uses general-purpose embeddings (fastembed / ONNX MiniLM) — not domain-specific. Same system works for legal, medical, finance, engineering, or any other field.
 - **Any number of pages:** PyMuPDF streams one page at a time. Peak RAM = 1 page. Always.
 - **Any number of PDFs:** Each PDF is an independent Celery task. FAISS shards scale to millions of chunks. Query speed stays O(log n) regardless of how many docs are indexed.

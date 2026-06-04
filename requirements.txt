@@ -1,18 +1,20 @@
-# LLM
+# LLM (runs remotely on GROQ — no local model)
 groq
 langchain
 langchain-groq
 langchain-community
 langgraph
 
-# Embeddings & Vector Store
-sentence-transformers
+# Embeddings & Re-ranking — fastembed uses ONNX runtime (NOT PyTorch),
+# which is what keeps RAM low enough to fit a 2 GB VPS.
+fastembed
 faiss-cpu
 rank-bm25
 
-# PDF Parsing
+# PDF Parsing + OCR
+# Tesseract (the OCR engine) is installed in the Docker images via apt.
 pymupdf
-easyocr
+pytesseract
 Pillow
 
 # Backend

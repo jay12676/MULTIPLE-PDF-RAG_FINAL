@@ -1,32 +1,39 @@
 from typing import List, Tuple
 
-from sentence_transformers import CrossEncoder
+from fastembed.rerank.cross_encoder import TextCrossEncoder
 
 from app.config import settings
+
+
+# Keep ONNX-runtime threads low for a small VPS (2 GB / 2 vCPU).
+_THREADS = 2
 
 
 class Reranker:
     """
     Cross-encoder re-ranking of candidate chunks.
 
+    Uses fastembed (ONNX runtime) instead of sentence-transformers (PyTorch)
+    so it runs without the heavy torch dependency — the underlying model is the
+    same ms-marco-MiniLM cross-encoder.
+
     Why cross-encoder after FAISS + BM25?
     ───────────────────────────────────────
-    FAISS uses a bi-encoder: query and chunk are embedded separately,
-    then compared by cosine similarity. Fast but less precise.
-
-    Cross-encoder reads (query + chunk) TOGETHER in one pass — much more
-    accurate because it sees the full context of both at once.
-
-    Workflow:
-      hybrid_search() → top 100 candidates  (fast, approximate)
-      reranker.rerank() → top 20 final       (slow, precise)
-
-    We only run the cross-encoder on 100 candidates, not all chunks —
-    so it stays fast even with thousands of documents.
+    FAISS/BM25 score query and chunk separately (fast but approximate).
+    The cross-encoder reads (query + chunk) TOGETHER in one pass — much more
+    accurate. We only run it on ~25 candidates, so it stays fast.
     """
 
     def __init__(self):
-        self._model = CrossEncoder(settings.RERANKER_MODEL)
+        self._model = TextCrossEncoder(
+            model_name=settings.RERANKER_MODEL,
+            threads=_THREADS,
+        )
+        # Warm up the ONNX session at startup so the FIRST real query is fast.
+        try:
+            list(self._model.rerank("warmup", ["warmup text"]))
+        except Exception:
+            pass
 
     def rerank(
         self,
@@ -41,8 +48,8 @@ class Reranker:
         if not candidates:
             return []
 
-        pairs  = [(query, text) for _, text in candidates]
-        scores = self._model.predict(pairs)
+        docs   = [text for _, text in candidates]
+        scores = list(self._model.rerank(query, docs))
 
         ranked = sorted(
             zip([cid for cid, _ in candidates], scores),

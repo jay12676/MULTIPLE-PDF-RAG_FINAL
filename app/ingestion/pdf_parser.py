@@ -1,5 +1,4 @@
 import fitz  # PyMuPDF
-import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Generator, List
@@ -9,15 +8,18 @@ import shutil
 
 logger = logging.getLogger(__name__)
 
-# ── OCR engine selection ────────────────────────────────────────────────────
-# Priority: Tesseract (fast C++) > EasyOCR (slow but no-install fallback)
+# ── OCR engine ──────────────────────────────────────────────────────────────
+# Tesseract (fast C++ engine, installed in the Docker image via apt).
+# We intentionally do NOT use EasyOCR here — it pulls in PyTorch, which would
+# blow the memory budget on a small (2 GB) VPS. Scanned-page text falls back to
+# empty if Tesseract is unavailable.
 
 def _find_tesseract() -> str | None:
     """Return tesseract executable path if found, else None."""
-    # Check PATH first
+    # Check PATH first (Linux/Docker installs it here)
     if shutil.which("tesseract"):
         return shutil.which("tesseract")
-    # Common Windows install paths
+    # Common Windows install paths (local dev only)
     for path in [
         r"C:\Program Files\Tesseract-OCR\tesseract.exe",
         r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
@@ -28,22 +30,11 @@ def _find_tesseract() -> str | None:
     return None
 
 _TESSERACT_PATH = _find_tesseract()
-_easyocr_reader = None   # lazy-loaded only if Tesseract not found
 
 if _TESSERACT_PATH:
     logger.info(f"[OCR] Using Tesseract: {_TESSERACT_PATH}")
 else:
-    logger.info("[OCR] Tesseract not found — will use EasyOCR (slower)")
-
-
-def _get_easyocr():
-    global _easyocr_reader
-    if _easyocr_reader is None:
-        import easyocr
-        logger.info("[OCR] Loading EasyOCR model...")
-        _easyocr_reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-        logger.info("[OCR] EasyOCR ready.")
-    return _easyocr_reader
+    logger.info("[OCR] Tesseract not found — scanned pages will be skipped (empty text)")
 
 
 # ── Data class ──────────────────────────────────────────────────────────────
@@ -163,12 +154,11 @@ class PDFParser:
         )
 
     def _ocr_page(self, page: fitz.Page, page_number: int) -> str:
-        """Render page to image and OCR it — Tesseract if available, else EasyOCR."""
+        """Render page to image and OCR it with Tesseract (if available)."""
+        if not _TESSERACT_PATH:
+            return ""
         try:
-            if _TESSERACT_PATH:
-                return self._ocr_tesseract(page)
-            else:
-                return self._ocr_easyocr(page)
+            return self._ocr_tesseract(page)
         except Exception as e:
             logger.warning(f"[pdf_parser] OCR page {page_number} failed: {e}")
             return ""
@@ -184,18 +174,6 @@ class PDFParser:
         pix = page.get_pixmap(matrix=mat, alpha=False)
         img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
         return pytesseract.image_to_string(img, config="--psm 6")
-
-    def _ocr_easyocr(self, page: fitz.Page) -> str:
-        """Fallback: use EasyOCR (no install needed, ~5-15s/page on CPU)."""
-        # 1.5x zoom instead of 2x — 44% less pixels, noticeably faster
-        mat = fitz.Matrix(1.5, 1.5)
-        pix = page.get_pixmap(matrix=mat, alpha=False)
-        img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
-            pix.height, pix.width, 3
-        )
-        reader = _get_easyocr()
-        results = reader.readtext(img, detail=0, paragraph=False)
-        return "\n".join(results)
 
     def _extract_tables(self, page: fitz.Page) -> tuple[bool, str]:
         try:

@@ -1,0 +1,5 @@
+# Treat PDFs as binary — never apply line-ending (CRLF/LF) conversion to them
+*.pdf binary
+*.faiss binary
+*.index binary
+*.pkl binary

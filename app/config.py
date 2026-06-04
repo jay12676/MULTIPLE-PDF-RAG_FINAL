@@ -10,9 +10,9 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379"
     DATABASE_URL: str = "sqlite:///./data/db/documind.db"
 
-    # Models
+    # Models (fastembed / ONNX model names)
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
-    RERANKER_MODEL: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    RERANKER_MODEL: str = "Xenova/ms-marco-MiniLM-L-6-v2"
 
     # Chunking
     CHUNK_SIZE: int = 512
